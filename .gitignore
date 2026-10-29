@@ -1,0 +1,9 @@
+/mbatterier
+/mbatterier.alfredworkflow
+menulets/*/build/
+__pycache__/
+/src/cmd/mbatterier/mbatterier
+AGENT.md
+alfred/*.png
+menulets/MBatteryControl/Assets.xcassets/
+.env

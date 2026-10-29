@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Prefixed by the host's identifier, as an embedded extension's must be. -->
+	<key>CFBundleIdentifier</key>
+	<string>it.blommesteijn.mbatterier.menulet.control</string>
+	<key>CFBundleName</key>
+	<string>MBatteryControl</string>
+	<key>CFBundleDisplayName</key>
+	<string>MBatterier</string>
+	<key>CFBundleExecutable</key>
+	<string>MBatteryControl</string>
+	<key>CFBundlePackageType</key>
+	<string>XPC!</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<!-- Third-party controls in Control Center came with macOS 26. -->
+	<key>LSMinimumSystemVersion</key>
+	<string>26.0</string>
+	<!-- The App Group the snapshot lives in, filled in by the Makefile. -->
+	<key>MBatterierAppGroup</key>
+	<string>__GROUP__</string>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.widgetkit-extension</string>
+	</dict>
+</dict>
+</plist>

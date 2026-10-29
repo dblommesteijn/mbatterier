@@ -1,0 +1,18 @@
+
+// Appended by the Makefile to the SDK's WidgetKit interface, for the
+// extension's build only: WidgetKit's own API for a control's preferred
+// size, which the SDK's interface leaves out but the framework exports (and
+// the SDK's WidgetKit.tbd lists). Control Center's gallery shows a control in
+// that size and adds it in that size.
+@available(macOS 26.0, iOS 18.0, watchOS 26.0, *)
+public struct ControlWidgetSize : Swift.Equatable {
+  public static var small: WidgetKit.ControlWidgetSize { get }
+  public static var medium: WidgetKit.ControlWidgetSize { get }
+  public static func medium(vertical: Swift.Bool) -> WidgetKit.ControlWidgetSize
+  public static var large: WidgetKit.ControlWidgetSize { get }
+  public static func == (a: WidgetKit.ControlWidgetSize, b: WidgetKit.ControlWidgetSize) -> Swift.Bool
+}
+@available(macOS 26.0, iOS 18.0, watchOS 26.0, *)
+extension SwiftUI.ControlWidgetConfiguration {
+  @_Concurrency.MainActor @preconcurrency public func preferredControlSize(_ size: WidgetKit.ControlWidgetSize) -> some SwiftUI.ControlWidgetConfiguration
+}

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>it.blommesteijn.mbatterier.menulet</string>
+	<key>CFBundleName</key>
+	<string>MBatterier</string>
+	<key>CFBundleDisplayName</key>
+	<string>MBatterier</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
+	<key>CFBundleExecutable</key>
+	<string>MBatterier</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<!-- No Dock icon, no app switcher entry: this app is only its menu bar item. -->
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<!-- The App Group shared with the Control Center control, filled in by the Makefile. -->
+	<key>MBatterierAppGroup</key>
+	<string>__GROUP__</string>
+</dict>
+</plist>

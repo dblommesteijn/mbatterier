@@ -1,0 +1,214 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>bundleid</key>
+	<string>it.blommesteijn.mactools.mbatterier</string>
+	<key>name</key>
+	<string>mbatterier</string>
+	<key>description</key>
+	<string>Timed High Power mode, Low Power by default</string>
+	<key>createdby</key>
+	<string>Dennis Blommesteijn</string>
+	<key>webaddress</key>
+	<string>https://blommesteijn.it</string>
+	<key>version</key>
+	<string>1.0.0</string>
+	<key>readme</key>
+	<string>Keyword: mbat
+
+mbat            presets (30m, 1h, 2h), until unplugged, and Low Power
+mbat 90m        High Power for 90 minutes
+mbat 2h -b      battery only (-c: adapter only)
+mbat unplug     High Power until unplugged (no time limit)
+mbat 2h -k      full 2h, ignoring plugging and unplugging
+mbat watch      follow the battery: High from 80%, Low below 20%
+mbat status     show the current mode per source
+
+On a boost row: ⌘ keep it through plugging and unplugging, ⌥ battery only,
+⌃ adapter only.
+mbat low        stop a running boost and watcher, Low Power now
+
+Needs passwordless sudo for mbatterier, see the project README. Set mbat_path if the binary isn't at /usr/local/bin/mbatterier.</string>
+	<key>variables</key>
+	<dict>
+		<key>mbat_path</key>
+		<string>/usr/local/bin/mbatterier</string>
+	</dict>
+	<key>connections</key>
+	<dict>
+		<key>3C1D2A10-0001-4A6B-9F00-000000000001</key>
+		<array>
+			<dict>
+				<key>destinationuid</key>
+				<string>3C1D2A10-0002-4A6B-9F00-000000000002</string>
+				<key>modifiers</key>
+				<integer>0</integer>
+				<key>modifiersubtext</key>
+				<string></string>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
+			<dict>
+				<key>destinationuid</key>
+				<string>3C1D2A10-0002-4A6B-9F00-000000000002</string>
+				<key>modifiers</key>
+				<integer>1048576</integer>
+				<key>modifiersubtext</key>
+				<string>keep through plugging and unplugging</string>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
+			<dict>
+				<key>destinationuid</key>
+				<string>3C1D2A10-0002-4A6B-9F00-000000000002</string>
+				<key>modifiers</key>
+				<integer>524288</integer>
+				<key>modifiersubtext</key>
+				<string>battery only</string>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
+			<dict>
+				<key>destinationuid</key>
+				<string>3C1D2A10-0002-4A6B-9F00-000000000002</string>
+				<key>modifiers</key>
+				<integer>262144</integer>
+				<key>modifiersubtext</key>
+				<string>adapter only</string>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
+		</array>
+		<key>3C1D2A10-0002-4A6B-9F00-000000000002</key>
+		<array>
+			<dict>
+				<key>destinationuid</key>
+				<string>3C1D2A10-0003-4A6B-9F00-000000000003</string>
+				<key>modifiers</key>
+				<integer>0</integer>
+				<key>modifiersubtext</key>
+				<string></string>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
+		</array>
+	</dict>
+	<key>objects</key>
+	<array>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>alfredfiltersresults</key>
+				<false/>
+				<key>argumenttype</key>
+				<integer>1</integer>
+				<key>escaping</key>
+				<integer>0</integer>
+				<key>keyword</key>
+				<string>mbat</string>
+				<key>queuedelaycustom</key>
+				<integer>3</integer>
+				<key>queuedelayimmediatelyinitially</key>
+				<true/>
+				<key>queuedelaymode</key>
+				<integer>0</integer>
+				<key>queuemode</key>
+				<integer>1</integer>
+				<key>runningsubtext</key>
+				<string></string>
+				<key>script</key>
+				<string>bin="${mbat_path:-/usr/local/bin/mbatterier}"; item() { printf '{"items":[{"title":"%s","subtitle":"%s","valid":false}]}' "$1" "$2"; }; if [ ! -x "$bin" ]; then item "mbatterier is missing" "Run: make install-system (see README, Alfred)"; else errf=$(mktemp); if out=$("$bin" alfred "$1" 2>"$errf"); then printf '%s' "$out"; else item "mbatterier failed" "$(head -c 160 "$errf" | tr -d '"\\\n')"; fi; rm -f "$errf"; fi</string>
+				<key>scriptargtype</key>
+				<integer>1</integer>
+				<key>scriptfile</key>
+				<string></string>
+				<key>subtext</key>
+				<string>High Power for a while, then back to Low Power</string>
+				<key>title</key>
+				<string>mbatterier</string>
+				<key>type</key>
+				<integer>0</integer>
+				<key>withspace</key>
+				<true/>
+			</dict>
+			<key>type</key>
+			<string>alfred.workflow.input.scriptfilter</string>
+			<key>uid</key>
+			<string>3C1D2A10-0001-4A6B-9F00-000000000001</string>
+			<key>version</key>
+			<integer>3</integer>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>concurrently</key>
+				<false/>
+				<key>escaping</key>
+				<integer>0</integer>
+				<key>script</key>
+				<string># $1 is an arg built by `mbatterier alfred`. Split it into words without glob expansion.
+read -r -a args &lt;&lt;&lt; "$1"
+"${mbat_path:-/usr/local/bin/mbatterier}" "${args[@]}" 2&gt;&amp;1</string>
+				<key>scriptargtype</key>
+				<integer>1</integer>
+				<key>scriptfile</key>
+				<string></string>
+				<key>type</key>
+				<integer>0</integer>
+			</dict>
+			<key>type</key>
+			<string>alfred.workflow.action.script</string>
+			<key>uid</key>
+			<string>3C1D2A10-0002-4A6B-9F00-000000000002</string>
+			<key>version</key>
+			<integer>2</integer>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>lastpathcomponent</key>
+				<false/>
+				<key>onlyshowifquerypopulated</key>
+				<true/>
+				<key>removeextension</key>
+				<false/>
+				<key>text</key>
+				<string>{query}</string>
+				<key>title</key>
+				<string>mbatterier</string>
+			</dict>
+			<key>type</key>
+			<string>alfred.workflow.output.notification</string>
+			<key>uid</key>
+			<string>3C1D2A10-0003-4A6B-9F00-000000000003</string>
+			<key>version</key>
+			<integer>1</integer>
+		</dict>
+	</array>
+	<key>uidata</key>
+	<dict>
+		<key>3C1D2A10-0001-4A6B-9F00-000000000001</key>
+		<dict>
+			<key>xpos</key>
+			<real>50</real>
+			<key>ypos</key>
+			<real>50</real>
+		</dict>
+		<key>3C1D2A10-0002-4A6B-9F00-000000000002</key>
+		<dict>
+			<key>xpos</key>
+			<real>260</real>
+			<key>ypos</key>
+			<real>50</real>
+		</dict>
+		<key>3C1D2A10-0003-4A6B-9F00-000000000003</key>
+		<dict>
+			<key>xpos</key>
+			<real>470</real>
+			<key>ypos</key>
+			<real>50</real>
+		</dict>
+	</dict>
+</dict>
+</plist>

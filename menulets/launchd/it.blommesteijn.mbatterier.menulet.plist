@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  A per-user LaunchAgent, not a LaunchDaemon: the menulet draws in the
+	  menu bar, so it needs the user's GUI session. This is the opposite of
+	  it.blommesteijn.mbatterier.watch, which has to be a root daemon because
+	  `pmset powermode` needs root. The menulet needs no privileges at all:
+	  it only reads, and only through the mbatterier binary.
+
+	  ProgramArguments is rewritten by `make install-menulet` with the real
+	  home directory, since launchd does not expand ~.
+	-->
+	<key>Label</key>
+	<string>it.blommesteijn.mbatterier.menulet</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__APP__/Contents/MacOS/MBatterier</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<!-- Restart a crash, but let a deliberate Quit stay quit. -->
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+</dict>
+</plist>

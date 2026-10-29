@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>it.blommesteijn.mbatterier.watch</string>
+	<!-- A LaunchDaemon, not a per-user agent: pmset powermode needs root. -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/local/bin/mbatterier</string>
+		<string>watch</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<!-- Restart a crashed watcher, but not one that `mbat low` stopped: that
+	     exits 0 and is meant to stay stopped. -->
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>/var/log/mbatterier.log</string>
+	<key>StandardErrorPath</key>
+	<string>/var/log/mbatterier.log</string>
+</dict>
+</plist>
