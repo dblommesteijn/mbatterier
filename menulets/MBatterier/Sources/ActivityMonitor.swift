@@ -29,9 +29,26 @@ enum ActivityMonitor {
                 // Asks for the permission once; a no until it is granted.
                 let prompt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
                 guard AXIsProcessTrustedWithOptions(prompt) else { return }
+                showWindow(of: monitor.processIdentifier)
                 select(names, in: monitor.processIdentifier, triesLeft: tries)
             }
         }
+    }
+
+    /// showWindow brings back Activity Monitor's window when it is running
+    /// with the window closed: opening it from here only activates it, with
+    /// nothing to show. It presses the Window menu's "Activity Monitor" (⌘1),
+    /// found by its key rather than its title, which is localized. A launch
+    /// that is still starting has no menu bar yet and opens its window anyway.
+    private static func showWindow(of pid: pid_t) {
+        let monitor = AXUIElementCreateApplication(pid)
+        if let windows: [AXUIElement] = value(monitor, kAXWindowsAttribute), !windows.isEmpty { return }
+        guard let bar: AXUIElement = value(monitor, kAXMenuBarAttribute),
+              let item = find(bar, where: { element in
+                  (value(element, kAXMenuItemCmdCharAttribute) as String?) == "1"
+                      && (value(element, kAXMenuItemCmdModifiersAttribute) as Int?) == 0
+              }) else { return }
+        AXUIElementPerformAction(item, kAXPressAction as CFString)
     }
 
     /// select selects the first row named one of names in Activity Monitor's
@@ -61,11 +78,17 @@ enum ActivityMonitor {
     }
 
     /// find is the first element with role under element, depth first.
-    private static func find(_ element: AXUIElement, role: String, depth: Int = 0) -> AXUIElement? {
-        if (value(element, kAXRoleAttribute) as String?) == role { return element }
+    private static func find(_ element: AXUIElement, role: String) -> AXUIElement? {
+        find(element) { (value($0, kAXRoleAttribute) as String?) == role }
+    }
+
+    /// find is the first element under element that matches, depth first.
+    private static func find(_ element: AXUIElement, depth: Int = 0,
+                             where matches: (AXUIElement) -> Bool) -> AXUIElement? {
+        if matches(element) { return element }
         guard depth < 8, let children: [AXUIElement] = value(element, kAXChildrenAttribute) else { return nil }
         for child in children {
-            if let found = find(child, role: role, depth: depth + 1) { return found }
+            if let found = find(child, depth: depth + 1, where: matches) { return found }
         }
         return nil
     }
