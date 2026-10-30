@@ -17,6 +17,7 @@ import (
 	"mbatterier/internal/charging"
 	"mbatterier/internal/pmset"
 	"mbatterier/internal/runstate"
+	"mbatterier/internal/smartcharge"
 )
 
 const usage = `mbatterier (alias: mbat) — timed High Power mode, Low Power by default
@@ -33,6 +34,7 @@ Usage:
   mbat off                                            Stop a running boost and watcher, give the power mode back to macOS (Automatic)
   mbat status [--json]                                Show current power mode, any running boost and watcher
   mbat energy [--json]                                Show your apps using significant energy (needs root)
+  mbat charge full                                    Charge to full now, past the charge limit or Optimized Battery Charging
   mbat alfred [query]                                 Alfred Script Filter output (JSON)
 
 Boost:
@@ -104,6 +106,8 @@ func main() {
 		err = status(os.Args[2:])
 	case "energy":
 		err = showEnergy(os.Args[2:])
+	case "charge":
+		err = charge(os.Args[2:])
 	case "alfred":
 		err = alfred(strings.Join(os.Args[2:], " "))
 	case "-h", "--help", "help":
@@ -660,14 +664,18 @@ type statusDoc struct {
 	// Modes holds the power mode per source, keyed "battery" and "ac". A
 	// source pmset doesn't report is missing.
 	Modes map[string]string `json:"modes"`
-	// ChargeLimit is the charge limit set in System Settings, in percent, or
-	// 0 when there is none.
+	// ChargeLimit is the limit the Battery menu's line names, in percent, or
+	// 0 when there is none: the one set in System Settings, or 100 after
+	// Charge to Full Now.
 	ChargeLimit int `json:"charge_limit,omitempty"`
 	// SlowCharger is macOS's own verdict on the adapter, the one its Battery
 	// menu shows as "Slow Charger". Only ever set on the adapter.
-	SlowCharger bool       `json:"slow_charger,omitempty"`
-	Boost       *holderDoc `json:"boost,omitempty"`
-	Watch       *holderDoc `json:"watch,omitempty"`
+	SlowCharger bool `json:"slow_charger,omitempty"`
+	// ChargeToFull is macOS's "Charge to Full Now": the charge is held short
+	// of full, and `mbat charge full` lets it through.
+	ChargeToFull bool       `json:"charge_to_full,omitempty"`
+	Boost        *holderDoc `json:"boost,omitempty"`
+	Watch        *holderDoc `json:"watch,omitempty"`
 }
 
 // holderDoc describes a running boost or watcher. A watcher has no deadline;
@@ -725,11 +733,53 @@ func statusJSON(modes map[pmset.Source]pmset.Mode) error {
 	}
 	boost, hasBoost := runstate.Current(runstate.Boost)
 	watch, hasWatch := runstate.Current(runstate.Watch)
-	b, err := json.MarshalIndent(statusJSONDoc(ps, charging.Read(), modes, boost, watch, hasBoost, hasWatch, time.Now()), "", "  ")
+	doc := statusJSONDoc(ps, charging.Read(), modes, boost, watch, hasBoost, hasWatch, time.Now())
+	applySmartCharge(&doc, ps)
+	b, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return err
 	}
 	fmt.Println(string(b))
+	return nil
+}
+
+// applySmartCharge fills in what PowerUI knows: whether macOS's Battery menu
+// would offer "Charge to Full Now", and the limit its line names. Only on
+// the adapter below 100%, where something can be held back: the question
+// costs an osascript run (about 0.1 s), which a reading on battery is
+// spared. Unreadable leaves the document as it was, not worth failing a
+// status reading over.
+func applySmartCharge(doc *statusDoc, ps pmset.PS) {
+	if !ps.OnAC || ps.Percent < 0 || ps.Percent >= 100 {
+		return
+	}
+	r, err := smartcharge.Read()
+	if err != nil {
+		return
+	}
+	doc.ChargeToFull = smartcharge.Offer(r.State) != smartcharge.None
+	doc.ChargeLimit = smartcharge.ShownLimit(r, doc.ChargeLimit)
+}
+
+// charge runs `mbat charge full`: macOS's "Charge to Full Now". It decides
+// afresh, so a stale menu can't override what no longer holds. No root:
+// PowerUI takes it from the user.
+func charge(args []string) error {
+	if len(args) != 1 || args[0] != "full" {
+		return fmt.Errorf("usage: mbat charge full")
+	}
+	r, err := smartcharge.Read()
+	if err != nil {
+		return err
+	}
+	action := smartcharge.Offer(r.State)
+	if action == smartcharge.None {
+		return errors.New("nothing holds the charge back")
+	}
+	if err := smartcharge.Perform(action); err != nil {
+		return err
+	}
+	fmt.Println("Charging to full.")
 	return nil
 }
 

@@ -11,7 +11,7 @@ MBatterier/
     ├── main.swift          bootstrap
     ├── AppDelegate.swift   status item, menu, refresh triggers, actions
     ├── ControlCenterFrame.swift  whether Control Center is open, and its panel's corner
-    ├── ZoomOpen.swift      the menu growing out of the tapped tile
+    ├── ZoomOpen.swift      the menu growing out of the tapped tile, and collapsing or fading on close
     ├── Status.swift        mirror of `status --json` and `energy --json` + StatusReader (execs the CLI)
     ├── BarText.swift       menu and bar wording (pure)
     ├── BarGlyphs.swift     bar image: High Power chevrons + battery
@@ -36,6 +36,24 @@ launchd/                  per-user LaunchAgent, starts it at login
 make TEAM=<team ID> menulet | install-menulet; make uninstall-menulet   # from the repo root
 make reload-control    # after an install, if the control still runs old code; then open Edit Controls
 ```
+
+## The menu from Control Center
+
+Tapping the control opens the menu, which behaves like the details of Apple's
+own modules:
+
+- **Opening:** it grows out of the tapped tile, over where Control Center was,
+  in Control Center's dark look.
+- **Closing with the Control Center button:** the menu stays where it is until
+  Control Center's panel is back (it comes a moment after the click), then
+  shrinks back into the tile as the panel fades in.
+- **Closing any other way** (a click elsewhere, Escape, an item that leaves
+  the menu): it fades out where it is, since there is no tile to go back to.
+  After a click on another menu bar item it waits up to 0.8 s for Control
+  Center first, then fades.
+
+How it is done, and the macOS timings it depends on, are in the project's
+`AGENT.md` (the stand-in shape rule).
 
 ## Rules
 

@@ -70,6 +70,7 @@ mbat low                       # stop boost + watcher, Low Power
 mbat off                       # stop boost + watcher, Automatic (macOS decides)
 mbat status [--json]           # modes, running boost and watcher
 mbat energy [--json]           # your apps using significant energy (needs root)
+mbat charge full               # charge to full now, past the charge limit
 ```
 
 Add `-d` / `--detach` to `boost` or `watch` to run in the background. Output
@@ -151,7 +152,9 @@ Automatic) and what mbatterier is doing.
 - **Bar:** battery with charge and bolt, High Power chevrons, ⏱ countdown for a
   timed boost, 👁 while watching, ∞ for an always-on boost.
 - **Menu:** power source (or *Slow Charger*), charge, time to full, charge
-  limit, Energy Mode rows (Automatic / Turn Off / Low / High), *Using
+  limit in macOS's words (*Charging to 80% Limit*, *Charged to 80% Limit*,
+  *Charging to 100% Limit* after Charge to Full Now), *Charge to Full Now*
+  while the charge is held short of full (see below), Energy Mode rows (Automatic / Turn Off / Low / High), *Using
   Significant Energy* (up to two apps with their icons, or *No Apps Using
   Significant Energy*; an approximation of Apple's list, see above; click an
   app to see it selected in Activity Monitor, which needs MBatterier allowed
@@ -173,6 +176,16 @@ with no app it is the single line *No Apps Using Significant Energy*, without
 the heading. A failed read, say because the sudo rule is missing, shows that
 same line, so an empty list can also mean it could not be read; check
 `sudo -n mbatterier energy` if you expect an app.
+
+**Charge to Full Now** works like the item in macOS's Battery menu, and shows
+when macOS's would: on the adapter, while the charge limit set in System
+Settings holds the battery (held at the limit, or draining down to it), or
+while Optimized Battery Charging holds it. Clicking it lets the battery charge
+to 100% until the limit next engages; macOS can take up to a minute to start
+charging. From a terminal: `mbat charge full`. Both ask macOS's private PowerUI
+framework through `osascript`, the way Control Center does, and need no root.
+Checked against macOS's own menu for the charge limit; the Optimized Battery
+Charging case is untested.
 
 The app reads everything from `mbatterier status --json` and never sets power
 itself: it runs the same commands as the terminal. It refreshes on plug and
@@ -252,8 +265,9 @@ required": fix the sudo rule. Debug with the bug icon in the workflow editor.
 | `on_ac`, `charging` | on the adapter; taking charge (false at a charge limit) |
 | `remaining_minutes` | pmset estimate, `0` = unknown |
 | `modes` | `battery` and `ac`: `automatic`, `low` or `high` |
-| `charge_limit` | limit from System Settings in %, absent if none |
+| `charge_limit` | the limit the menu's line names, in %: the one from System Settings, or 100 after Charge to Full Now; absent if none |
 | `slow_charger` | macOS's own "Slow Charger" verdict, only on the adapter |
+| `charge_to_full` | macOS's Battery menu would offer "Charge to Full Now"; `mbat charge full` does it |
 | `boost` | `label`, `remaining_seconds`, `until_unplug` or `always` |
 | `watch` | `label` with the thresholds |
 

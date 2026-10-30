@@ -104,13 +104,15 @@ func chargeWords(_ status: Status) -> String {
     }
 }
 
-/// limitWords is the charge-limit line: "Will Stop Charging at 80%" on the way
-/// up, macOS's "Charged to 80% Limit" once it holds there. Like the system menu
-/// it says nothing on battery, where the limit doesn't apply.
+/// limitWords is the charge-limit line, in macOS's words: "Charging to 80%
+/// Limit" on the way up, "Charged to 80% Limit" once it holds there, and
+/// "Charging to 100% Limit" after Charge to Full Now (seen in the system menu
+/// on macOS 27). Like the system menu it says nothing on battery, where the
+/// limit doesn't apply.
 func limitWords(_ status: Status) -> String? {
     guard status.chargeLimit > 0, status.onAC, status.percent >= 0 else { return nil }
     if status.charging || status.percent < status.chargeLimit {
-        return "Will Stop Charging at \(status.chargeLimit)%"
+        return "Charging to \(status.chargeLimit)% Limit"
     }
     return "Charged to \(status.chargeLimit)% Limit"
 }

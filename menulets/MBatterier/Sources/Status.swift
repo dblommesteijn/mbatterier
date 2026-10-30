@@ -22,6 +22,9 @@ struct Status: Decodable {
     var chargeLimit: Int
     /// slowCharger is macOS's own verdict on the adapter in use.
     var slowCharger: Bool
+    /// chargeToFull is macOS's "Charge to Full Now": the charge is held short
+    /// of full, and `mbatterier charge full` lets it through.
+    var chargeToFull: Bool
     var boost: Holder?
     var watch: Holder?
 
@@ -50,6 +53,7 @@ struct Status: Decodable {
         case remainingMinutes = "remaining_minutes"
         case chargeLimit = "charge_limit"
         case slowCharger = "slow_charger"
+        case chargeToFull = "charge_to_full"
     }
 
     /// The CLI leaves both charging fields out when they are unset, so they
@@ -63,6 +67,7 @@ struct Status: Decodable {
         modes = try c.decode([String: String].self, forKey: .modes)
         chargeLimit = try c.decodeIfPresent(Int.self, forKey: .chargeLimit) ?? 0
         slowCharger = try c.decodeIfPresent(Bool.self, forKey: .slowCharger) ?? false
+        chargeToFull = try c.decodeIfPresent(Bool.self, forKey: .chargeToFull) ?? false
         boost = try c.decodeIfPresent(Holder.self, forKey: .boost)
         watch = try c.decodeIfPresent(Holder.self, forKey: .watch)
     }

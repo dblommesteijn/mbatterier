@@ -149,7 +149,19 @@ private func handOver(_ window: NSWindow, rows: NSImageView, from start: NSRect,
     }
     closeWatch = watchMenuClosing(at: end, then: collapse)
     collapseZoom = collapse
+    // A click on another menu bar item (the Control Center button) takes the
+    // menu away at once, without the fade watchMenuClosing waits for: the
+    // system hides it as the click lands, before any app hears of it
+    // (recorded: gone in the click's frame, with the click reaching a
+    // listen-only event tap 15 ms later, a global monitor 40 ms later). So
+    // the shape stands in for the menu while the pointer is in the menu bar,
+    // where no click can be meant for the menu (watchMenuBar), and the tap
+    // starts the collapse from there.
+    let clickWatch = watchClicks(then: collapse)
+    let barWatch = watchMenuBar(window, rows: rows, menuAt: end, picture: { closing().picture })
     open()
+    clickWatch()
+    barWatch()
     collapseZoom = nil
     // In case the menu closed without either noticing.
     collapse()
@@ -173,6 +185,73 @@ private func topAligned(_ picture: NSImage, in size: NSSize) -> NSImage {
     return image
 }
 
+/// watchMenuBar shows the shape in the menu's place while the pointer is in
+/// the menu bar, the menu's window made transparent under it, and puts the
+/// menu back when the pointer leaves; it returns what stops watching. The
+/// picture is of the rows with nothing lit, as they are with the pointer out
+/// of the menu. A timer in the tracking mode, which the menu runs.
+private func watchMenuBar(_ window: NSWindow, rows: NSImageView, menuAt end: NSRect,
+                          picture: @escaping () -> NSImage?) -> () -> Void {
+    var standingIn = false
+    let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { _ in
+        guard let menu = menuWindow(at: end), menu.alphaValue > 0 || standingIn else { return }
+        let inBar = pointerInMenuBar()
+        guard inBar != standingIn, window.contentView?.isHidden == false else { return }
+        standingIn = inBar
+        if inBar {
+            if let picture = picture() { rows.image = topAligned(picture, in: menu.frame.size) }
+            window.setFrame(menu.frame, display: true)
+            window.hasShadow = true
+            window.displayIfNeeded()
+            CATransaction.flush()
+            window.alphaValue = 1
+            menu.alphaValue = 0
+        } else {
+            menu.alphaValue = 1
+            window.alphaValue = 0
+            window.hasShadow = false
+        }
+    }
+    RunLoop.main.add(timer, forMode: .common)
+    RunLoop.main.add(timer, forMode: .eventTracking)
+    return {
+        timer.invalidate()
+        // AppKit may show the same window for the next menu.
+        for menu in NSApp.windows where NSStringFromClass(type(of: menu)) == "NSPopupMenuWindow" {
+            menu.alphaValue = 1
+        }
+    }
+}
+
+/// watchClicks calls `then` on any mouse down while the menu is open, and
+/// returns what stops watching. The tap runs on the main run loop in the
+/// common modes, which the menu's tracking mode is one of.
+private func watchClicks(then: @escaping () -> Void) -> () -> Void {
+    final class Box { let then: () -> Void; init(_ then: @escaping () -> Void) { self.then = then } }
+    let box = Unmanaged.passRetained(Box(then))
+    let mask = CGEventMask(1 << CGEventType.leftMouseDown.rawValue)
+    if let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .listenOnly,
+                                   eventsOfInterest: mask, callback: { _, type, event, info in
+        if type == .leftMouseDown, let info {
+            Unmanaged<Box>.fromOpaque(info).takeUnretainedValue().then()
+        }
+        return Unmanaged.passUnretained(event)
+    }, userInfo: box.toOpaque()), let source = CFMachPortCreateRunLoopSource(nil, tap, 0) {
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        return {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+            CFMachPortInvalidate(tap)
+            box.release()
+        }
+    }
+    let monitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { _ in then() }
+    return {
+        monitor.map(NSEvent.removeMonitor)
+        box.release()
+    }
+}
+
 /// watchMenuClosing calls `then` as the menu at `end` starts to close. AppKit
 /// fades a closing menu out by lowering its window's alpha frame by frame
 /// (measured: 0.86, 0.71, 0.55 … over 0.25s), and tells menuDidClose and
@@ -182,7 +261,8 @@ private func topAligned(_ picture: NSImage, in size: NSSize) -> NSImage {
 private func watchMenuClosing(at end: NSRect, then: @escaping () -> Void) -> Timer {
     let timer = Timer(timeInterval: 1.0 / 240, repeats: true) { timer in
         guard let menu = menuWindow(at: end) else { return }
-        guard menu.alphaValue < 1 else { return }
+        // Exactly 0 is watchMenuBar's stand-in, not a fade.
+        guard menu.alphaValue < 1 && menu.alphaValue > 0 else { return }
         timer.invalidate()
         then()
     }
@@ -194,10 +274,12 @@ private func watchMenuClosing(at end: NSRect, then: @escaping () -> Void) -> Tim
 /// menuWindow is the visible menu window whose top left is at `end`'s, the
 /// menu zoomOpen opened rather than one of its submenus.
 private func menuWindow(at end: NSRect) -> NSWindow? {
-    NSApp.windows.first {
-        $0.isVisible && NSStringFromClass(type(of: $0)) == "NSPopupMenuWindow"
-            && abs($0.frame.minX - end.minX) < 2 && abs($0.frame.maxY - end.maxY) < 2
-    }
+    NSApp.windows.first { $0.isVisible && isMenuWindow($0, at: end) }
+}
+
+private func isMenuWindow(_ window: NSWindow, at end: NSRect) -> Bool {
+    NSStringFromClass(type(of: window)) == "NSPopupMenuWindow"
+        && abs(window.frame.minX - end.minX) < 2 && abs(window.frame.maxY - end.maxY) < 2
 }
 
 /// collapseZoom starts the open shape's collapse, set while a menu zoomOpen
@@ -215,7 +297,21 @@ private func zoomClose(_ window: NSWindow, rows: NSImageView, picture: NSImage?,
     window.hasShadow = true
     window.displayIfNeeded()
     CATransaction.flush()
+    window.alphaValue = 1
     window.orderFrontRegardless()
+    // The tile is only there to shrink into once Control Center is back,
+    // which a click on its menu bar button brings, a moment later (recorded:
+    // its panel appeared about 0.45 s after the click, then faded in over
+    // 0.15 s). Until then the shape stays where the menu was. Any other way
+    // out leaves no tile to go back to, and the shape fades where it is.
+    guard pointerInMenuBar() else { return fadeOut(window) }
+    waitForControlCenter { open in
+        open ? shrink(window, to: to) : fadeOut(window)
+    }
+}
+
+/// shrink takes the shape back into the tile it grew from.
+private func shrink(_ window: NSWindow, to: NSRect) {
     NSAnimationContext.runAnimationGroup({ context in
         context.duration = zoomDuration
         context.timingFunction = zoomCurve
@@ -231,6 +327,48 @@ private func zoomClose(_ window: NSWindow, rows: NSImageView, picture: NSImage?,
         context.timingFunction = CAMediaTimingFunction(name: .easeIn)
         window.animator().alphaValue = 0
     }
+}
+
+/// fadeOut fades the shape where it is, as AppKit fades a closing menu
+/// (measured: 0.25 s).
+private func fadeOut(_ window: NSWindow) {
+    NSAnimationContext.runAnimationGroup({ context in
+        context.duration = menuFadeDuration
+        context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        window.animator().alphaValue = 0
+    }, completionHandler: {
+        window.orderOut(nil)
+    })
+}
+
+private let menuFadeDuration: TimeInterval = 0.25
+
+/// controlCenterWait is how long the shape waits for Control Center to come
+/// back after a click in the menu bar; the panel was seen after 0.45 s. A
+/// click on another menu bar item brings none, and the shape fades then.
+private let controlCenterWait: TimeInterval = 0.8
+
+/// pointerInMenuBar is whether the mouse is in the menu bar, where the click
+/// that closed the menu was.
+private func pointerInMenuBar() -> Bool {
+    let pointer = NSEvent.mouseLocation
+    guard let screen = NSScreen.screens.first(where: { $0.frame.contains(pointer) }) else { return false }
+    return pointer.y >= screen.visibleFrame.maxY
+}
+
+/// waitForControlCenter calls `then(true)` as soon as Control Center's panel
+/// is on screen, or `then(false)` after controlCenterWait. A timer in the
+/// tracking mode too, should a menu be open meanwhile.
+private func waitForControlCenter(then: @escaping (Bool) -> Void) {
+    let started = Date()
+    let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { timer in
+        let open = controlCenterIsOpen()
+        guard open || Date().timeIntervalSince(started) > controlCenterWait else { return }
+        timer.invalidate()
+        then(open)
+    }
+    RunLoop.main.add(timer, forMode: .common)
+    RunLoop.main.add(timer, forMode: .eventTracking)
 }
 
 /// ZoomWindow is the window the shape grows in. It has the active look a
@@ -309,9 +447,9 @@ private func backdropLayer(in layer: CALayer) -> CALayer? {
 }
 
 /// removeUnderMenu empties `window` as the menu draws over it, and returns
-/// the timer that empties it anyway if the menu doesn't draw in time. The
-/// emptied window stays up, so the collapse can show it again in the frame
-/// the menu goes (see collapseZoom). The timer runs in the tracking mode too,
+/// the timer that empties it anyway if the menu doesn't draw in time, and
+/// then makes it a transparent, drawn window. It stays up, so the collapse
+/// can show it in the frame the menu goes (see collapseZoom). The timer runs in the tracking mode too,
 /// the only one that runs while a menu is open.
 ///
 /// The swap has to land in one frame. The menu's glass is clear, so a shape
@@ -332,15 +470,23 @@ private func removeUnderMenu(_ window: NSWindow) -> Timer {
         guard hidden == nil else { return }
         MenuDrawSignal.onDraw = nil
         window.contentView?.isHidden = true
-        // Empty but still up, for the collapse to show again at once.
-        window.hasShadow = false
         hidden = Date()
         zoomLog.notice("shape hidden after \(hidden!.timeIntervalSince(started)) s: \(reason, privacy: .public)")
     }
     MenuDrawSignal.onDraw = { hide("menu drawing") }
+    // Once the menu is up, the shape is drawn again in a transparent window:
+    // ready for the collapse to show with a change of alpha alone. Shown by
+    // drawing its glass afresh, it came about 60 ms after a menu that went
+    // at once, a frame or more with neither (recorded).
+    let ready: TimeInterval = 0.1
     let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { timer in
         if hidden == nil && Date().timeIntervalSince(started) > maxMenuWait { hide("timed out") }
-        if hidden != nil { timer.invalidate() }
+        guard let hidden, Date().timeIntervalSince(hidden) >= ready else { return }
+        timer.invalidate()
+        window.alphaValue = 0
+        window.hasShadow = false
+        window.contentView?.isHidden = false
+        window.displayIfNeeded()
     }
     RunLoop.main.add(timer, forMode: .common)
     RunLoop.main.add(timer, forMode: .eventTracking)
@@ -362,7 +508,7 @@ final class MenuDrawSignal: NSView {
 /// openMenuWindow is the app's showing menu window of `size`. Only menu
 /// windows: the shape zoomOpen grew stays up, emptied, at the menu's size
 /// while the menu is open, and a picture of it is a blank one.
-private func openMenuWindow(size: NSSize) -> NSWindow? {
+func openMenuWindow(size: NSSize) -> NSWindow? {
     NSApp.windows.first {
         $0.isVisible && NSStringFromClass(type(of: $0)) == "NSPopupMenuWindow"
             && abs($0.frame.width - size.width) < 2 && abs($0.frame.height - size.height) < 2

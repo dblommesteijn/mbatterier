@@ -1,32 +1,79 @@
 import AppKit
 
 /// menuTextFont and menuTextColor are the text of the system Battery menu's
-/// rows, measured from it: a 19px cap height at 2x, which is 13.5pt, and an
-/// opaque dark gray of 30/255 in a light menu. The gray is deliberate: black at
-/// partial opacity would take on the tint of whatever is behind the menu, where
-/// Apple's text stays one slightly gray colour. In a dark menu it is the label
-/// colour's white, which was not measured. One definition, so every row, line
-/// and title in the menu reads the same.
-let menuTextFont = NSFont.systemFont(ofSize: 13.5)
+/// rows, measured from it: 13pt, which drew "Battery Settings…", "Charge to
+/// Full Now" and the mode names at the system menu's width (13.5pt, read off
+/// a 19px cap height, came out 3% wider and was a size too big), and black at
+/// 85%, the label colour: 36 over a white backdrop and 23 over a gray of 153,
+/// the same 85% both times. In dark mode it is white at 90%: 233 over a glass
+/// of 32 and 242 over 122, the same 90% both times. One definition, so every
+/// row, line and title in the menu reads the same.
+let menuTextFont = NSFont.systemFont(ofSize: 13)
 let menuTextColor = NSColor(name: nil) { appearance in
     appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        ? NSColor.white.withAlphaComponent(0.85)
-        : NSColor(white: 30.0 / 255, alpha: 1)
+        ? NSColor.white.withAlphaComponent(0.9)
+        : NSColor.black.withAlphaComponent(0.85)
 }
 
 /// infoTextFont is the font of the detail lines under the menu's title ("Power
 /// Source: …", the charge, a running boost). Measured from the system menu:
-/// 12pt regular, a size below the rows' 13.5pt.
+/// 12pt regular, a size below the rows' 13pt.
 let infoTextFont = NSFont.systemFont(ofSize: 12)
 
-/// secondaryTextColor is the gray of the detail lines and the section headings:
-/// the exact flat colour of "Power Source: Battery" in the system menu,
-/// #41423E, sampled from a screenshot of it. In a dark menu it is the label
-/// colour's white at 60%, which was not measured.
-let secondaryTextColor = NSColor(name: nil) { appearance in
-    appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        ? NSColor.white.withAlphaComponent(0.6)
-        : NSColor(srgbRed: 65.0 / 255, green: 66.0 / 255, blue: 62.0 / 255, alpha: 1)
+/// secondaryTextColor is the gray of the detail lines and the section headings,
+/// drawn by a VibrantLabel. It is not a colour laid over the menu but the menu
+/// darkened by a fixed amount: "Power Source: …", "Charged to 80% Limit",
+/// "Energy Mode" and "Using Significant Energy" came out 103 below the
+/// backdrop over a gray of 154 and 104 below it over white, where black at any
+/// one opacity would take a different amount off each. That is vibrancy, so it
+/// is the system's secondary label colour, left for the menu's glass to blend.
+let secondaryTextColor = NSColor.secondaryLabelColor
+
+/// controlCenterSecondaryTextColor is secondaryTextColor in the menu opened
+/// from Control Center: flat white at 60%, not vibrant. The glass picks light
+/// or dark vibrant text from what is behind it, whatever the menu's
+/// appearance, and behind that menu Control Center fades in and out, so
+/// vibrant text there kept changing colour.
+let controlCenterSecondaryTextColor = NSColor.white.withAlphaComponent(0.6)
+
+/// VibrantLabel is a label that lets the menu's glass blend its text in, as
+/// AppKit does for the system's label colours. Only in secondaryTextColor:
+/// another colour (the red of an error) is drawn as given.
+final class VibrantLabel: NSTextField {
+    private static let all = NSHashTable<VibrantLabel>.weakObjects()
+
+    /// vibrant switches every label between secondaryTextColor, blended by
+    /// the glass, and controlCenterSecondaryTextColor, flat. Set it before
+    /// the menu opens.
+    static var vibrant = true {
+        didSet {
+            guard vibrant != oldValue else { return }
+            all.allObjects.forEach { $0.restyle() }
+        }
+    }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        VibrantLabel.all.add(self)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("not used")
+    }
+
+    override var allowsVibrancy: Bool { textColor == secondaryTextColor }
+
+    /// restyle swaps a gray label's colour for the current look. AppKit reads
+    /// allowsVibrancy when a view joins its window, so the label is taken out
+    /// and put back in the same place to have it read again.
+    private func restyle() {
+        guard textColor == secondaryTextColor || textColor == controlCenterSecondaryTextColor else { return }
+        textColor = VibrantLabel.vibrant ? secondaryTextColor : controlCenterSecondaryTextColor
+        guard let parent = superview, let index = parent.subviews.firstIndex(of: self) else { return }
+        removeFromSuperview()
+        let next = index < parent.subviews.count ? parent.subviews[index] : nil
+        parent.addSubview(self, positioned: next == nil ? .above : .below, relativeTo: next)
+    }
 }
 
 /// menuLeftInset is the margin to the left of everything in the menu: headline
@@ -103,7 +150,7 @@ final class MenuRowView: NSView {
     var counter = "" {
         didSet { layoutCounter() }
     }
-    private let counterLabel = NSTextField(labelWithString: "")
+    private let counterLabel = VibrantLabel(labelWithString: "")
     private var trailingMargin: CGFloat = 18
 
     /// title is the row's text; setting it refits the row.
@@ -428,8 +475,8 @@ final class ReloadButton: HoverButton {
 /// these lines should read in the normal text colour. Setting `title` updates
 /// the label and refits the row, so it is used like any other item.
 final class InfoItem: NSMenuItem {
-    private let label = NSTextField(labelWithString: "")
-    private let detailLabel = NSTextField(labelWithString: "")
+    private let label = VibrantLabel(labelWithString: "")
+    private let detailLabel = VibrantLabel(labelWithString: "")
     /// lineGap (init) is the distance between the text of two lines in a row of
     /// these, so the row is the text's line height plus that.
     private let row: NSView
