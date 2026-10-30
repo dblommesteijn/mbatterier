@@ -3,11 +3,21 @@ import os
 
 private let zoomLog = Logger(subsystem: "it.blommesteijn.mbatterier", category: "zoom")
 
-/// zoomDuration and zoomCurve are how the shape grows. Control Center opens a
-/// module's details (recorded at 60fps) in about 0.23s, but most of the way
-/// in the first part and then a slow settle into place, which reads as
-/// slower than an even ease-out of the same length; a little longer and a
-/// curve with a long soft tail comes closer.
+/// zoomResponse is how the shape grows: the period of the critically damped
+/// spring it grows on (see SpringFrame). Control Center opens a module's
+/// details (recorded at 60fps) in about 0.23s, most of the way in the first
+/// part and then a slow settle into place. A spring starting from rest, as
+/// Apple's animations do, is 98% of the way there at 0.19s with this period
+/// and within a point at about 0.25s, and moves only 10% of the way in its
+/// first frame, so the shape is seen to leave the tile. The ease-out curve
+/// it replaced jumped 40% of the way in the first frame (recorded): the
+/// tile-sized shape never showed. A period of 0.25s took 0.4s (recorded),
+/// most of it creeping a point a frame.
+private let zoomResponse: TimeInterval = 0.20
+/// contentFadeIn is how far along the growth the menu's rows have faded in,
+/// as Apple's details fade in over the growing tile.
+private let contentFadeIn: Double = 0.5
+/// zoomDuration and zoomCurve are how the shape shrinks back into the tile.
 private let zoomDuration: TimeInterval = 0.30
 private let zoomCurve = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1.0)
 /// zoomCornerRadius matches a menu's rounded corners, so the shape the menu
@@ -57,8 +67,9 @@ func useControlCenterGlassForMenus(_ controlCenter: Bool) {
 /// to grow out of the tile that was tapped, as Apple's module details do.
 ///
 /// `picture` is the menu's rows as they last showed (see pictureOfOpenMenu).
-/// It grows with the shape, scaled to fit it, so the text is there from the
-/// start rather than appearing only when the menu replaces the shape.
+/// It grows with the shape, scaled as a whole to its width (see PictureView),
+/// and fades in over the first part, so the text is there early rather than
+/// appearing only when the menu replaces the shape.
 /// `glass` is the menu's glass filter as it last showed (see
 /// glassFilterOfOpenMenu), so the shape blurs and tints as the menu will.
 ///
@@ -90,27 +101,19 @@ func zoomOpen(from start: NSRect, to end: NSRect, picture: NSImage?, glass: Glas
     window.contentView = shape
     // Always there, also without a picture yet, so the collapse has
     // somewhere to put the one taken while the menu was open.
-    let rows = NSImageView(frame: shape.bounds)
+    let rows = PictureView(frame: shape.bounds)
     rows.image = picture.map { topAligned($0, in: end.size) }
-    rows.imageScaling = .scaleAxesIndependently
-    rows.autoresizingMask = [.width, .height]
-    // In a plain holder: as the glass's content itself, the picture's own
-    // size would hold the window at the menu's size from the start, and
-    // the shape would slide rather than grow.
-    let holder = NSView(frame: shape.bounds)
-    holder.addSubview(rows)
-    shape.contentView = holder
+    rows.alphaValue = 0
+    shape.contentView = rows
     // The menu's glass from the first frame, not faded in: drawn and
     // committed before the window shows.
     window.displayIfNeeded()
     CATransaction.flush()
     window.orderFrontRegardless()
 
-    NSAnimationContext.runAnimationGroup({ context in
-        context.duration = zoomDuration
-        context.timingFunction = zoomCurve
-        window.animator().setFrame(end, display: true)
-    }, completionHandler: {
+    SpringFrame.run(window, to: end, response: zoomResponse, step: { progress in
+        rows.alphaValue = min(1, progress / contentFadeIn)
+    }, done: {
         // The last step of the animation may not have reached the screen
         // yet, and the menu replaces the shape in the next commit: the menu
         // jumped the last few points (recorded). The end frame shows first.
@@ -123,11 +126,115 @@ func zoomOpen(from start: NSRect, to end: NSRect, picture: NSImage?, glass: Glas
     })
 }
 
+/// SpringFrame moves a window's frame to `end` on a critically damped spring
+/// of period `response`, a step on every frame of the display it is on, and
+/// calls `done` once the window is there. NSAnimationContext only takes a
+/// Bézier curve, which can't both start from rest and settle as slowly as a
+/// spring. `step` gets how far along the move is, 0 to 1, after each step.
+private final class SpringFrame: NSObject {
+    private let window: NSWindow
+    private let start: NSRect
+    private let end: NSRect
+    private let omega: Double
+    private let step: (Double) -> Void
+    private let done: () -> Void
+    private var link: CADisplayLink?
+    private var began: CFTimeInterval?
+
+    private init(_ window: NSWindow, end: NSRect, response: TimeInterval,
+                 step: @escaping (Double) -> Void, done: @escaping () -> Void) {
+        self.window = window
+        self.start = window.frame
+        self.end = end
+        self.omega = 2 * .pi / response
+        self.step = step
+        self.done = done
+    }
+
+    /// run starts the move. The display link holds the SpringFrame until it
+    /// is done.
+    static func run(_ window: NSWindow, to end: NSRect, response: TimeInterval,
+                    step: @escaping (Double) -> Void, done: @escaping () -> Void) {
+        let spring = SpringFrame(window, end: end, response: response, step: step, done: done)
+        let link = window.displayLink(target: spring, selector: #selector(tick))
+        spring.link = link
+        link.add(to: .main, forMode: .common)
+        link.add(to: .main, forMode: .eventTracking)
+    }
+
+    /// tick places the window where the spring is when this frame shows.
+    /// It stops within a point of the end: a window frame is kept to whole
+    /// points, so closer in the spring only creeps a point a frame.
+    @objc private func tick(_ link: CADisplayLink) {
+        let began = self.began ?? link.timestamp
+        self.began = began
+        let x = omega * (link.targetTimestamp - began)
+        let progress = 1 - (1 + x) * exp(-x)
+        let travel = max(abs(end.minX - start.minX), abs(end.minY - start.minY),
+                         abs(end.maxX - start.maxX), abs(end.maxY - start.maxY))
+        guard travel * (1 - progress) >= 1 else {
+            link.invalidate()
+            self.link = nil
+            window.setFrame(end, display: true)
+            step(1)
+            done()
+            return
+        }
+        func mix(_ a: CGFloat, _ b: CGFloat) -> CGFloat { a + (b - a) * progress }
+        let minX = mix(start.minX, end.minX), minY = mix(start.minY, end.minY)
+        window.setFrame(NSRect(x: minX, y: minY, width: mix(start.maxX, end.maxX) - minX,
+                               height: mix(start.maxY, end.maxY) - minY), display: true)
+        step(progress)
+    }
+}
+
+/// PictureView shows the menu's rows over the growing shape: at its full
+/// width, at the height that keeps the picture's proportions, pinned to its
+/// top, and cut off below. The rows scale as a whole as the shape grows, as
+/// Apple's details do; scaled to fill instead, they stretched one way more
+/// than the other while the shape went from the square tile to the menu's
+/// taller one. A plain view rather than the picture as the glass's content
+/// itself: then the picture's own size would hold the window at the menu's
+/// size from the start, and the shape would slide rather than grow.
+final class PictureView: NSView {
+    private let picture = NSImageView()
+
+    var image: NSImage? {
+        get { picture.image }
+        set { picture.image = newValue; place() }
+    }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        picture.imageScaling = .scaleAxesIndependently
+        addSubview(picture)
+        clipsToBounds = true
+        autoresizingMask = [.width, .height]
+        place()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        place()
+    }
+
+    private func place() {
+        guard let size = picture.image?.size, size.width > 0 else {
+            picture.frame = bounds
+            return
+        }
+        let height = bounds.width * size.height / size.width
+        picture.frame = NSRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
+    }
+}
+
 /// handOver opens the menu over the grown shape and, once the menu closes,
 /// collapses the shape back into `start`.
-private func handOver(_ window: NSWindow, rows: NSImageView, from start: NSRect, to end: NSRect,
+private func handOver(_ window: NSWindow, rows: PictureView, from start: NSRect, to end: NSRect,
                       open: () -> Void, closing: @escaping () -> (picture: NSImage?, size: NSSize)) {
-    let removal = removeUnderMenu(window)
+    let removal = removeUnderMenu(window, menuAt: end)
     var collapsed = false
     var closeWatch: Timer?
     let collapse = {
@@ -190,13 +297,15 @@ private func topAligned(_ picture: NSImage, in size: NSSize) -> NSImage {
 /// menu back when the pointer leaves; it returns what stops watching. The
 /// picture is of the rows with nothing lit, as they are with the pointer out
 /// of the menu. A timer in the tracking mode, which the menu runs.
-private func watchMenuBar(_ window: NSWindow, rows: NSImageView, menuAt end: NSRect,
+private func watchMenuBar(_ window: NSWindow, rows: PictureView, menuAt end: NSRect,
                           picture: @escaping () -> NSImage?) -> () -> Void {
     var standingIn = false
     let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { _ in
         guard let menu = menuWindow(at: end), menu.alphaValue > 0 || standingIn else { return }
         let inBar = pointerInMenuBar()
-        guard inBar != standingIn, window.contentView?.isHidden == false else { return }
+        // Only once removeUnderMenu has left the shape transparent and ready,
+        // or while standing in: not under the menu's arrival, nor collapsing.
+        guard inBar != standingIn, standingIn || window.alphaValue == 0 else { return }
         standingIn = inBar
         if inBar {
             if let picture = picture() { rows.image = topAligned(picture, in: menu.frame.size) }
@@ -290,10 +399,9 @@ var collapseZoom: (() -> Void)?
 /// zoomClose shrinks the shape zoomOpen grew from `from`, where the menu
 /// was, back into `to`, then takes it away: the menu seems to go back into
 /// the tile it came from.
-private func zoomClose(_ window: NSWindow, rows: NSImageView, picture: NSImage?, from: NSRect, to: NSRect) {
+private func zoomClose(_ window: NSWindow, rows: PictureView, picture: NSImage?, from: NSRect, to: NSRect) {
     if let picture { rows.image = topAligned(picture, in: from.size) }
     window.setFrame(from, display: false)
-    window.contentView?.isHidden = false
     window.hasShadow = true
     window.displayIfNeeded()
     CATransaction.flush()
@@ -446,47 +554,48 @@ private func backdropLayer(in layer: CALayer) -> CALayer? {
     return nil
 }
 
-/// removeUnderMenu empties `window` as the menu draws over it, and returns
-/// the timer that empties it anyway if the menu doesn't draw in time, and
-/// then makes it a transparent, drawn window. It stays up, so the collapse
-/// can show it in the frame the menu goes (see collapseZoom). The timer runs in the tracking mode too,
-/// the only one that runs while a menu is open.
+/// removeUnderMenu swaps the shape for the menu under it once the menu is
+/// on screen, and returns the timer that does it, anyway if the menu doesn't
+/// draw in time. The shape stays up, transparent and drawn, so the collapse
+/// can show it with a change of alpha alone in the frame the menu goes (see
+/// collapseZoom). The timer runs in the tracking mode too, the only one that
+/// runs while a menu is open.
 ///
-/// The swap has to land in one frame. The menu's glass is clear, so a shape
-/// left under it shows through, lighter and with its picture of the rows as a
-/// blurred ghost (recorded: one such frame whenever the swap lagged). Ordered
-/// out early, the shape leaves the bare backdrop instead: a menu window counts
-/// as visible once it is ordered in, before it is drawn, and ordering out goes
-/// to the window server straight away. So the shape's content is hidden, a
-/// layer change, from within the menu's first drawing (see MenuDrawSignal),
-/// which puts it in the same commit as that drawing. Watching for the menu
-/// with the timer instead missed that commit about one time in six.
-private func removeUnderMenu(_ window: NSWindow) -> Timer {
+/// The swap has to wait for the menu to be on screen: going early, the shape
+/// leaves the bare backdrop, Control Center's panel at full strength, for a
+/// frame. A menu window counts as visible once it is ordered in, before it
+/// is drawn, and even emptying the shape from within the menu's first
+/// drawing (see MenuDrawSignal), in the same commit, still showed the menu a
+/// frame after the empty shape on 6 taps in 10 (recorded, macOS 27). So the
+/// shape stays two frames after the menu's first drawing. Meanwhile the
+/// menu's window is made transparent: the shape is a level above it (see
+/// zoomOpen), and its glass blurred the menu's glass under it, two frames
+/// darker than either (recorded). Faded out over the menu instead, the shape
+/// blended darker for longer. The swap then shows the menu and takes the
+/// shape away together, both window changes the window server makes at once.
+private func removeUnderMenu(_ window: NSWindow, menuAt end: NSRect) -> Timer {
     /// maxMenuWait is how long the shape waits for the menu to draw at most.
     let maxMenuWait: TimeInterval = 0.5
+    /// menuSettled is how long after its first drawing the menu is surely
+    /// on screen: it was seen a frame late, never two.
+    let menuSettled: TimeInterval = 2.0 / 60
     let started = Date()
-    var hidden: Date?
-    func hide(_ reason: String) {
-        guard hidden == nil else { return }
+    var drawn: Date?
+    func menuDrew(_ reason: String) {
+        guard drawn == nil else { return }
         MenuDrawSignal.onDraw = nil
-        window.contentView?.isHidden = true
-        hidden = Date()
-        zoomLog.notice("shape hidden after \(hidden!.timeIntervalSince(started)) s: \(reason, privacy: .public)")
+        drawn = Date()
+        menuWindow(at: end)?.alphaValue = 0
+        zoomLog.notice("shape leaving after \(drawn!.timeIntervalSince(started)) s: \(reason, privacy: .public)")
     }
-    MenuDrawSignal.onDraw = { hide("menu drawing") }
-    // Once the menu is up, the shape is drawn again in a transparent window:
-    // ready for the collapse to show with a change of alpha alone. Shown by
-    // drawing its glass afresh, it came about 60 ms after a menu that went
-    // at once, a frame or more with neither (recorded).
-    let ready: TimeInterval = 0.1
+    MenuDrawSignal.onDraw = { menuDrew("menu drawing") }
     let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { timer in
-        if hidden == nil && Date().timeIntervalSince(started) > maxMenuWait { hide("timed out") }
-        guard let hidden, Date().timeIntervalSince(hidden) >= ready else { return }
+        if drawn == nil && Date().timeIntervalSince(started) > maxMenuWait { menuDrew("timed out") }
+        guard let drawn, Date().timeIntervalSince(drawn) >= menuSettled else { return }
         timer.invalidate()
+        menuWindow(at: end)?.alphaValue = 1
         window.alphaValue = 0
         window.hasShadow = false
-        window.contentView?.isHidden = false
-        window.displayIfNeeded()
     }
     RunLoop.main.add(timer, forMode: .common)
     RunLoop.main.add(timer, forMode: .eventTracking)
@@ -535,7 +644,18 @@ func pictureOfOpenMenu(size: NSSize) -> NSImage? {
     labels.forEach { $0.isHidden = false }
     if let context = NSGraphicsContext(bitmapImageRep: rep) {
         NSGraphicsContext.saveGraphicsState()
-        for label in labels { drawCell(of: label, in: rows, into: context) }
+        for label in labels {
+            // A label in a vibrant appearance, such as the submenu chevron's
+            // secondaryLabelColor, resolves to an opaque grey that only the
+            // window server's vibrancy blend lightens. Pictured as it is, it
+            // came out dark grey where the menu shows it light, and changed
+            // as the menu took over (recorded). Its plain appearance gives
+            // the translucent colour the blend amounts to.
+            let plain = plainAppearance(of: label)
+            label.appearance = plain ?? label.appearance
+            drawCell(of: label, in: rows, into: context)
+            if plain != nil { label.appearance = nil }
+        }
         NSGraphicsContext.restoreGraphicsState()
     }
     let picture = NSImage(size: rows.bounds.size)
@@ -548,6 +668,18 @@ func pictureOfOpenMenu(size: NSSize) -> NSImage? {
 /// mouse, so the shape growing into it shouldn't show a row lit that goes out
 /// when the menu takes over.
 var picturingMenu = false
+
+/// plainAppearance is the plain appearance a label in a vibrant one draws
+/// like, or nil when it has none of its own to drop: only labels whose
+/// appearance is inherited are changed, so none set by the app is lost.
+private func plainAppearance(of label: NSTextField) -> NSAppearance? {
+    guard label.appearance == nil else { return nil }
+    switch label.effectiveAppearance.name {
+    case .vibrantDark: return NSAppearance(named: .darkAqua)
+    case .vibrantLight: return NSAppearance(named: .aqua)
+    default: return nil
+    }
+}
 
 /// textFields is every shown text field under `view`.
 private func textFields(in view: NSView) -> [NSTextField] {
