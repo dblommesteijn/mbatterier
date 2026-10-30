@@ -311,3 +311,7 @@ tools/symbols.py        the Control Center battery symbols, Python stdlib only
 - Locks and state live in root-owned `/var/run`, the daemon plist is root-owned.
 - The menu bar app runs as you and execs only `/usr/local/bin/mbatterier`.
 - Keep Go patched and run `make check` before installing.
+
+## License
+
+MIT, see [LICENSE](LICENSE).

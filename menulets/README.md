@@ -52,8 +52,59 @@ own modules:
   After a click on another menu bar item it waits up to 0.8 s for Control
   Center first, then fades.
 
-How it is done, and the macOS timings it depends on, are in the project's
-`AGENT.md` (the stand-in shape rule).
+### How it is done
+
+AppKit owns the menu's window and doesn't animate it, so `ZoomOpen.swift`
+grows a stand-in: a borderless glass window (`ZoomWindow`) holding a picture of
+the rows (`pictureOfOpenMenu`, pinned to the top at the target size by
+`topAligned`, so a menu of another height keeps its margins). The real menu is
+popped up over it. The code depends on these facts, all measured on macOS 27:
+
+- **Growth** runs on a critically damped spring (`SpringFrame`, period
+  `zoomResponse` 0.20 s) on the window's display link, not
+  `NSAnimationContext`: a Bézier can't start from rest, and the ease-out it
+  replaced jumped 40% in the first frame. Window frames are whole points, so
+  the spring stops within 1 pt; closer in it only crept a point a frame.
+- **Handover in** (`removeUnderMenu`): the shape sits a level *above* the menu
+  (`popUpMenu + 1`). At the menu's first drawing (`MenuDrawSignal`) the menu
+  window goes to alpha 0; two frames later the menu goes to alpha 1 and the
+  shape to 0 together. Hiding the shape in the same commit as that drawing
+  still left a frame of bare Control Center (6 taps in 10: the menu reaches
+  the screen a frame late). Holding the shape over a visible menu blurred
+  glass over glass, which came out darker, and fading it out was darker still,
+  for longer. After the swap the shape stays up as a drawn, transparent
+  window, so any later swap is just an alpha change (redrawing its glass took
+  about 60 ms).
+- **The picture** must match the menu pixel for pixel or the swap shows. Rows
+  scale as a whole (`PictureView`), and labels in a vibrant appearance are
+  drawn under the plain one (`plainAppearance`): offscreen there is no
+  vibrancy blend, so the chevron came out dark grey.
+- **A normal close fades** the menu window's alpha over 0.25 s on the main
+  thread, and `menuDidClose` / `didEndTracking` only arrive after that.
+  `watchMenuClosing` takes the first alpha strictly between 0 and 1 as the
+  start (exactly 0 means the shape is standing in, below).
+- **A click on another menu bar item** (the Control Center button) removes
+  the menu in the click's frame, before any app hears of the click: a
+  listen-only `CGEventTap` saw it 15 ms later (no permission needed), a global
+  `NSEvent` monitor 40 ms later, and hooking `orderWindow:relativeTo:` on
+  `NSPopupMenuWindow` never fired. So whenever the pointer is in the menu bar,
+  where no click is meant for the menu, `watchMenuBar` has the shape stand in
+  for the menu (menu alpha 0), and the tap (`watchClicks`) starts the
+  collapse.
+- **Control Center comes back late:** its panel appeared about 0.45 s after
+  the click and faded in over about 0.15 s. After a close with the pointer in
+  the menu bar, the shape waits for the panel (`waitForControlCenter`, up to
+  0.8 s, `controlCenterIsOpen`) and only then shrinks into the tile;
+  otherwise it fades in place (`fadeOut`, 0.25 s). It can't tell the Control
+  Center button from other menu bar items, hence the timeout.
+- **Per-frame drawing on the main thread freezes** during AppKit's fade,
+  because the fade holds the main thread. Keep the shape's content
+  GPU-scaled (an `NSImageView` inside `PictureView`).
+
+Check any change here by recording the screen
+(`screencapture -v -V <s> -R <rect>`, then extract frames with
+`ffmpeg -fps_mode passthrough`). The problems were gaps of 1 to 3 frames that
+no log shows.
 
 ## Rules
 
