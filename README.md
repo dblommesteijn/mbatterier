@@ -22,7 +22,7 @@ Center control.
 | Homebrew | any | installing and updating Go (`brew upgrade go`). Optional if you get Go elsewhere. |
 | Xcode | with Swift 6.4 and the macOS 26 SDK or later | the menu bar app and the control: `swiftc`, `actool` and `appintentsmetadataprocessor` come with Xcode, not with the Command Line Tools alone. Select it with `sudo xcode-select -s /Applications/Xcode.app`. |
 | python3 | any 3.x (comes with Xcode) | generating the Alfred icons and the Control Center symbols. Standard library only. |
-| Apple Development certificate | any, in your keychain | signing the menu bar app (the App Group needs a team). |
+| Apple Development certificate | any, in your keychain | signing the menu bar app (the App Group needs a team). See [Your Team ID](#your-team-id). |
 | Alfred with Powerpack | any with workflows | the Alfred workflow only. |
 
 No third-party Go modules or Python packages are used.
@@ -37,6 +37,51 @@ make install-agent         # optional: run `mbat watch` at boot
 
 Run `make install-system` again after every rebuild: Alfred, the menu bar app
 and the daemon all run that copy.
+
+### Your Team ID
+
+The menu bar app is signed with your own Apple Development certificate, and
+`make menulet` / `make install-menulet` need the Team ID of that certificate in
+`TEAM`. The CLI, the Alfred workflow and the daemon don't need it.
+
+**1. Get a certificate, if you have none.** Check first:
+
+```sh
+security find-identity -v -p codesigning
+#   1) 0123…CDEF "Apple Development: Your Name (A1B2C3D4E5)"
+```
+
+If no `Apple Development` line shows, open Xcode → Settings → Accounts, add
+your Apple ID, select the team, click **Manage Certificates…**, then **+** →
+**Apple Development**. Xcode puts the certificate in your login keychain.
+
+**2. Read the Team ID from it.** It is the certificate's `OU`:
+
+```sh
+security find-certificate -c "Apple Development" -p | openssl x509 -noout -subject
+# subject=... CN=Apple Development: Your Name (A1B2C3D4E5), OU=ABCDE12345, ...
+```
+
+Here `TEAM` is `ABCDE12345`. The id in parentheses after your name
+(`A1B2C3D4E5`) is not it, and the build won't work with that one. With a paid
+developer account, the same ID is also listed under Membership details at
+[developer.apple.com/account](https://developer.apple.com/account).
+
+If you have certificates for more than one team, `find-certificate` shows the
+first one. Pick one from the `find-identity` list and pass its full name as
+`SIGN_ID`, together with its team:
+
+```sh
+make SIGN_ID="Apple Development: Your Name (A1B2C3D4E5)" TEAM=ABCDE12345 install-menulet
+```
+
+**3. Save it**, so you don't have to type it every time. The Makefile reads
+`.env` at the repo root, and git ignores that file:
+
+```sh
+echo 'TEAM=ABCDE12345' > .env
+make install-menulet
+```
 
 ### Passwordless sudo
 
@@ -221,23 +266,9 @@ Add it with Control Center → Edit Controls → MBatterier.
   Development`) and need your Apple Developer Team ID in `TEAM`; there is no
   default, and the build stops without it. The app and the control share an
   App Group named `<TEAM>.it.blommesteijn.mbatterier`, and macOS only lets them share it
-  when it starts with the team of the certificate that signed them. Find the
-  ID as the `OU` of your certificate:
-
-  ```sh
-  security find-certificate -c "Apple Development" -p | openssl x509 -noout -subject
-  # subject=... CN=Apple Development: Your Name (A1B2C3D4E5), OU=ABCDE12345, ...
-  #   TEAM is the OU (ABCDE12345), not the id in parentheses
-  make TEAM=ABCDE12345 install-menulet
-  ```
-
-  To skip typing it, put it in a `.env` file at the repo root, which the
-  Makefile reads and git ignores:
-
-  ```sh
-  echo 'TEAM=ABCDE12345' > .env
-  make install-menulet
-  ```
+  when it starts with the team of the certificate that signed them. Where to
+  find the ID, and how to save it in `.env`, is under
+  [Your Team ID](#your-team-id).
 - If the tile shows a dashed app placeholder, open Control Center → Edit
   Controls once. macOS doesn't cache a development-signed control, so after
   Control Center restarts it only finds the control again from there.
