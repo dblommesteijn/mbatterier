@@ -12,6 +12,10 @@ battery life is lost to a mode left on. mbatterier makes those switches:
 It comes as a CLI (`mbat`), an Alfred workflow, a menu bar app and a Control
 Center control.
 
+<p>
+  <img src="docs/overview.png" width="420" alt="The mbatterier menu open under its menu bar item: power source, charge limit, Charge to Full Now, the watch rule, the energy modes with High Power selected, and Settings">
+</p>
+
 ## Prerequisites
 
 | What | Version | Needed for |
@@ -194,6 +198,13 @@ ran:
 Shows the charge, the power mode as a colour (purple High, yellow Low, plain
 Automatic) and what mbatterier is doing.
 
+<p>
+  <img src="docs/menu-bar.png" width="62" alt="The menu bar item: an eye for the watcher, and a purple battery at 89% for High Power">
+</p>
+<p>
+  <img src="docs/menu.png" width="379" alt="The menu: power source, charge limit, Charge to Full Now, the watch rule, the energy modes with High Power selected, apps using significant energy, Settings and Battery Settings">
+</p>
+
 - **Bar:** battery with charge and bolt, High Power chevrons, ⏱ countdown for a
   timed boost, 👁 while watching, ∞ for an always-on boost.
 - **Menu:** power source (or *Slow Charger*), charge, time to full, charge
@@ -244,6 +255,10 @@ after Apple's own: the battery alone in the small size, battery and charge in
 the medium and large ones, yellow in Low Power and purple in High Power (the
 menu bar's Monochrome settings apply). Tapping it opens the MBatterier menu.
 Add it with Control Center → Edit Controls → MBatterier.
+
+<p>
+  <img src="docs/control-center.png" width="300" alt="The Battery (Centred) controls in Control Center in the large and medium sizes, at 88% with the High Power chevrons">
+</p>
 
 - It shows what the menu bar app last read, so it needs the app running. With
   no reading it shows `—`.
@@ -333,6 +348,7 @@ alfred/                 the workflow, exactly as shipped
 launchd/                the watch LaunchDaemon
 tools/icon.py           the Alfred icons, Python stdlib only
 tools/symbols.py        the Control Center battery symbols, Python stdlib only
+docs/                   the README's screenshots
 ```
 
 ## Security
