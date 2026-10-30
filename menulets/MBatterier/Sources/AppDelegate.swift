@@ -161,6 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// menuGlass is the menu's glass filter as it last showed, which the
     /// growing shape draws with, so it looks as the menu will.
     private var menuGlass: GlassFilter?
+    private var pictureTimer: Timer?
 
     // The menu, laid out like macOS's own Battery menu.
     /// headerItem is the menu's top row: the "Battery" headline on the left and
@@ -176,12 +177,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var menuOpenedFromControl = false
     /// menuWidening is how much wider than its natural width the menu is made.
     private let menuWidening: CGFloat = 1.05
-    private let sourceItem = InfoItem(lineGap: 2)
+    /// The two lines under the title are 3 apart, measured against the system
+    /// menu: at 2 "Charged to …" sat 1pt high, and everything under it too.
+    private let sourceItem = InfoItem(lineGap: 3)
     private let errorItem = InfoItem(color: .systemRed)
     /// limitItem is macOS's charge-limit line, under the source.
-    private let limitItem = InfoItem(lineGap: 2)
+    private let limitItem = InfoItem(lineGap: 3)
     private let watchItem = InfoItem()
     private let holderSeparator = NSMenuItem.separator()
+    /// chargeFullItem is macOS's "Charge to Full Now", shown while the
+    /// charge is held short of full.
+    private let chargeFullItem = NSMenuItem(title: "Charge to Full Now",
+                                            action: #selector(chargeToFull), keyEquivalent: "")
     /// energyRows are the lines of "Using Significant Energy", one per app
     /// the CLI reports, each with the app's icon; a click shows the app in
     /// Activity Monitor. Unused ones stay hidden. With no app, or no reading, the
@@ -222,13 +229,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         // The whole item is one composed image (see composeBar), no title.
         statusItem.button?.imagePosition = .imageOnly
-        // The menu isn't the item's own: macOS opens an item's menu 10pt below
-        // the menu bar, and only its own Wi-Fi and Battery menus flush against
-        // it. The item opens it itself instead, flush (see openMenuFlush).
-        _ = buildMenu()
-        statusItem.button?.target = self
-        statusItem.button?.action = #selector(openMenuFlush)
-        statusItem.button?.sendAction(on: [.leftMouseDown, .rightMouseDown])
+        // The menu is the item's own, as only then does macOS light the item
+        // while it is open (highlight(_:) draws nothing on macOS 27). macOS
+        // opens it 10pt below the menu bar, though, and only its own Wi-Fi and
+        // Battery menus flush against it, so it is lifted flush once up (see
+        // liftMenuFlush).
+        statusItem.menu = buildMenu()
 
         readTimer = Timer.scheduledTimer(withTimeInterval: refreshEvery, repeats: true) { [weak self] _ in
             self?.refresh()
@@ -268,7 +274,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Empty space above the first row.
         let topMargin = NSMenuItem()
-        topMargin.view = NSView(frame: NSRect(x: 0, y: 0, width: 1, height: menuTopMargin))
+        // Also says when the menu draws, for the Control Center zoom's handover.
+        topMargin.view = MenuDrawSignal(frame: NSRect(x: 0, y: 0, width: 1, height: menuTopMargin))
         topMargin.view?.autoresizingMask = [.width]
         menu.addItem(topMargin)
         headerItem.view = makeHeader()
@@ -278,9 +285,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(item)
         }
 
-        // The watcher sits where macOS puts "Charge to Full Now". A boost has
-        // no line here; its countdown sits behind the High Power row.
+        // "Charge to Full Now" sits where macOS puts it, and the watcher
+        // under it. A boost has no line here; its countdown sits behind the
+        // High Power row.
         menu.addItem(holderSeparator)
+        chargeFullItem.target = self
+        chargeFullItem.view = makeRow("Charge to Full Now", selectable: true)
+        chargeFullItem.isHidden = true
+        menu.addItem(chargeFullItem)
         watchItem.isEnabled = false
         menu.addItem(watchItem)
 
@@ -419,15 +431,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// only the symbol; Reload keeps its label.
     private func makeHeader() -> NSView {
         let height: CGFloat = 26
+        // below is extra space under the title, so "Power Source" sits where
+        // the system menu has it, checked against a capture of both menus.
+        let below: CGFloat = 3
         let width: CGFloat = 200
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height + below))
         view.autoresizingMask = [.width]
 
         let title = NSTextField(labelWithString: "Battery")
-        title.font = .systemFont(ofSize: 13.5, weight: .bold)
+        // 13pt semibold, as in the system menu: 13.5pt bold drew it 6% wider
+        // and 18% heavier than macOS's, more than the size alone explains.
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
         title.textColor = menuTextColor
         title.sizeToFit()
-        title.frame.origin = NSPoint(x: menuLeftInset, y: (height - title.frame.height) / 2)
+        title.frame.origin = NSPoint(x: menuLeftInset, y: below + (height - title.frame.height) / 2)
         view.addSubview(title)
 
         let close = HoverButton(frame: .zero)
@@ -441,14 +458,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         close.sizeToFit()
         close.frame.size = NSSize(width: close.frame.width + 8, height: 22)
         close.frame.origin = NSPoint(x: width - 12 - close.frame.width,
-                                     y: (height - close.frame.height) / 2)
+                                     y: below + (height - close.frame.height) / 2)
         let reload = ReloadButton(frame: NSRect(x: 0, y: 0, width: 26, height: 22))
         reload.target = self
         reload.action = #selector(refreshNow)
         reload.isBordered = false
         reload.tip = "Reload: read the battery and power mode now, instead of at the next 15-second refresh."
         reload.frame.origin = NSPoint(x: close.frame.minX - 4 - reload.frame.width,
-                                      y: (height - reload.frame.height) / 2)
+                                      y: below + (height - reload.frame.height) / 2)
         let watch = HoverButton(frame: NSRect(x: 0, y: 0, width: 26, height: 22))
         watch.image = watchIcon(on: false)
         watch.target = self
@@ -458,7 +475,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         watch.contentTintColor = .labelColor
         watch.tip = watchTip(watching: false)
         watch.frame.origin = NSPoint(x: reload.frame.minX - 4 - watch.frame.width,
-                                     y: (height - watch.frame.height) / 2)
+                                     y: below + (height - watch.frame.height) / 2)
         watchButton = watch
         let always = HoverButton(frame: NSRect(x: 0, y: 0, width: 26, height: 22))
         always.image = alwaysBoostIcon(on: false)
@@ -469,7 +486,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         always.contentTintColor = .labelColor
         always.tip = alwaysTip(on: false)
         always.frame.origin = NSPoint(x: watch.frame.minX - 4 - always.frame.width,
-                                      y: (height - always.frame.height) / 2)
+                                      y: below + (height - always.frame.height) / 2)
         alwaysButton = always
         for button in [always, watch, reload, close] {
             // Pinned to the right edge as the menu is widened.
@@ -537,18 +554,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    /// openMenuFlush opens the menu under the item, menuBarGap below the menu
-    /// bar, closer than the 10pt macOS gives an item's own menu, and the item
-    /// lit while it is open. Its left edge sits where macOS would put it.
-    @objc private func openMenuFlush() {
-        guard let button = statusItem.button, let window = button.window,
-              let screen = window.screen ?? NSScreen.main else { return }
-        button.highlight(true)
-        menu.popUp(positioning: nil,
-                   at: NSPoint(x: window.frame.minX - popUpInset,
-                               y: screen.visibleFrame.maxY - menuBarGap - popUpInset),
-                   in: nil)
-        button.highlight(false)
+    /// liftMenuFlush moves the menu macOS opened under the item up to
+    /// menuBarGap below the menu bar. The window is there by the next pass of
+    /// the run loop, which runs in the tracking mode while the menu is open.
+    private func liftMenuFlush() {
+        RunLoop.main.perform(inModes: [.eventTracking, .common]) { [self] in
+            guard menuIsOpen, let bar = statusItem.button?.window,
+                  let window = openMenuWindow(size: menu.size) else { return }
+            window.setFrameTopLeftPoint(NSPoint(x: window.frame.minX,
+                                                y: bar.frame.minY - menuBarGap + popUpInset))
+        }
+    }
+
+    /// readBeforeOpening reads the CLI on the spot and renders, so the menu
+    /// opens already showing the current state instead of animating open and
+    /// then reloading. The exec is cheap, and the user is waiting on the menu.
+    private func readBeforeOpening() {
+        readAhead()()
+    }
+
+    /// readAhead starts a read off the main thread and returns what applies
+    /// it: that waits for the read (briefly, at most) and renders. The
+    /// control's tap reads during the zoom this way, instead of holding up
+    /// the main thread between taking focus and growing the shape.
+    private func readAhead() -> () -> Void {
+        let box = ReadBox()
+        let group = DispatchGroup()
+        group.enter()
+        DispatchQueue.global(qos: .userInteractive).async {
+            box.result = Result { try StatusReader.read() }
+            group.leave()
+        }
+        return {
+            _ = group.wait(timeout: .now() + 0.5)
+            switch box.result {
+            case .success(let status):
+                self.reading = status
+                self.readAt = Date()
+                self.failure = nil
+            case .failure(let error):
+                self.reading = nil
+                self.failure = error.localizedDescription
+            case nil:
+                return
+            }
+            self.render()
+        }
+    }
+
+    /// redrawMenu paints the open menu's rows now. A menu tracking the mouse
+    /// doesn't repaint views on its own after their state changes, which left
+    /// it looking frozen after a click.
+    private func redrawMenu() {
+        guard menuIsOpen else { return }
+        for row in menuRows {
+            row.needsDisplay = true
+            row.displayIfNeeded()
+        }
+        for button in headerButtons {
+            button.needsDisplay = true
+            button.displayIfNeeded()
+        }
+        headerItem.view?.needsDisplay = true
+        headerItem.view?.displayIfNeeded()
+        menu.update()
+        // The collapse shows the rows as they closed, so a change shown in
+        // the open menu is pictured again.
+        if menuOpenedFromControl { pictureMenuSoon() }
+    }
+
+    /// ReadBox carries a read from the thread that takes it to the one that
+    /// applies it; readAhead's group orders the two.
+    private final class ReadBox: @unchecked Sendable {
+        var result: Result<Status, Error>?
     }
 
     /// menuBarGap is the space between the menu bar and the menu it opens.
@@ -600,6 +678,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let pointer = NSEvent.mouseLocation
             NSApp.activate(ignoringOtherApps: true)
             guard let corner else {
+                // menuNeedsUpdate reads before it opens.
                 self.statusItem.button?.performClick(nil)
                 return
             }
@@ -608,14 +687,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                              width: size.width, height: size.height)
             let tile = self.tileSize
             let start = NSRect(x: pointer.x - tile / 2, y: pointer.y - tile / 2, width: tile, height: tile)
+            let applyRead = self.readAhead()
             zoomOpen(from: start, to: end, picture: self.menuPicture, glass: self.menuGlass) {
                 // Where the shape ended, 5pt under the menu bar (see
                 // controlCenterCorner), allowing for popUp's own offset.
                 // Dark, with white text, as Control Center draws over its
                 // glass; submenus take it from the menu.
+                applyRead()
                 self.menuOpenedFromControl = true
                 self.menu.appearance = controlCenterAppearance
+                VibrantLabel.vibrant = false
                 self.menu.popUp(positioning: nil, at: NSPoint(x: end.minX, y: end.maxY - self.popUpInset), in: nil)
+            } closing: {
+                // The picture is of the menu as it showed; menuDidClose has
+                // already refitted the menu's width for the next opening.
+                (self.menuPicture, self.menuPicture?.size ?? self.menu.size)
             }
         }
     }
@@ -642,7 +728,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let height: CGFloat = 24
         let view = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: height))
         view.autoresizingMask = [.width]
-        let label = NSTextField(labelWithString: text)
+        let label = VibrantLabel(labelWithString: text)
         label.font = .systemFont(ofSize: 12, weight: .semibold)
         label.textColor = secondaryTextColor
         label.sizeToFit()
@@ -701,7 +787,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func perform(_ args: [String]) {
         DispatchQueue.global(qos: .userInitiated).async {
             let result = Result { try StatusReader.run(args) }
-            DispatchQueue.main.async {
+            onMain {
                 if case .failure(let error) = result {
                     self.actionError = error.localizedDescription
                 } else {
@@ -710,6 +796,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.refresh()
             }
         }
+    }
+
+    /// chargeToFull runs `mbatterier charge full`, macOS's "Charge to Full
+    /// Now". The menu stays open; the row goes once the reading after it no
+    /// longer offers it.
+    @objc private func chargeToFull() {
+        perform(["charge", "full"])
     }
 
     /// toggleWatch starts or stops the watcher with its default thresholds,
@@ -832,7 +925,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         pendingRefresh?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.refresh() }
         pendingRefresh = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
+        // A timer in the tracking mode too, so it also reads while the menu is open.
+        let timer = Timer(timeInterval: 0.25, repeats: false) { _ in
+            if !work.isCancelled { work.perform() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        RunLoop.main.add(timer, forMode: .eventTracking)
     }
 
     /// appearanceChanged redraws once the switch has settled into the bar.
@@ -867,9 +965,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// menuNeedsUpdate reads before the item's click opens the menu, so it
+    /// opens already current; the control's tap has read already.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu === self.menu && !menuIsOpen && !menuOpenedFromControl { readBeforeOpening() }
+    }
+
     func menuWillOpen(_ menu: NSMenu) {
         widenMenu()
         menuIsOpen = true
+        if menu === self.menu && !menuOpenedFromControl { liftMenuFlush() }
         refresh()
         refreshEnergy()
         // Only the Control Center look is pictured: it is what zoomOpen grows.
@@ -882,16 +987,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// it. A timer in the tracking mode, since nothing else runs while a menu
     /// is open.
     private func pictureMenuSoon() {
+        // One picture for a burst of changes, such as a countdown's ticks.
+        pictureTimer?.invalidate()
         let timer = Timer(timeInterval: 0.4, repeats: false) { [weak self] _ in
             guard let self, self.menuIsOpen else { return }
             self.menuPicture = pictureOfOpenMenu(size: self.menu.size) ?? self.menuPicture
             self.menuGlass = glassFilterOfOpenMenu(size: self.menu.size) ?? self.menuGlass
         }
+        pictureTimer = timer
         RunLoop.main.add(timer, forMode: .common)
         RunLoop.main.add(timer, forMode: .eventTracking)
     }
 
     func menuDidClose(_ menu: NSMenu) {
+        // The shape it opened from shrinks back into the tile, should
+        // watchMenuClosing have missed the start of the close.
+        if menu === self.menu { collapseZoom?() }
         menuIsOpen = false
         menuRows.forEach { $0.reset() }
         headerButtons.forEach { $0.reset() }
@@ -900,6 +1011,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if menu === self.menu {
             menuOpenedFromControl = false
             self.menu.appearance = nil
+            VibrantLabel.vibrant = true
         }
     }
 
@@ -909,7 +1021,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func refresh() {
         DispatchQueue.global(qos: .utility).async {
             let result = Result { try StatusReader.read() }
-            DispatchQueue.main.async {
+            onMain {
                 switch result {
                 case .success(let status):
                     self.reading = status
@@ -937,7 +1049,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         energyReading = true
         DispatchQueue.global(qos: .utility).async {
             let result = Result { try StatusReader.readEnergy() }
-            DispatchQueue.main.async {
+            onMain {
                 self.energyReading = false
                 self.energyReadAt = Date()
                 // A failed read, such as an older binary without `energy` or
@@ -963,6 +1075,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 (row.view as? MenuRowView)?.appIcon = appIcon(names[i])
             }
         }
+        // The menu's height may have changed with the list; the collapse
+        // should show it as it is.
+        if menuIsOpen && menuOpenedFromControl { pictureMenuSoon() }
     }
 
     /// appIcon is the icon of the app the energy list names, as macOS's list
@@ -1055,6 +1170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // The text changed, so the natural width may have; only while closed,
         // since an open menu keeps the width it opened with.
         defer { if !menuIsOpen { widenMenu() } }
+        defer { redrawMenu() }
         // Every way the bar can change runs through here, settings included.
         defer { publishControl() }
 
@@ -1078,6 +1194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             limitItem.isHidden = true
             (highItem.view as? MenuRowView)?.counter = ""
             watchItem.isHidden = true
+            chargeFullItem.isHidden = true
             holderSeparator.isHidden = true
             (automaticItem.view as? MenuRowView)?.badge = energyBadge(.automatic, active: false)
             (lowItem.view as? MenuRowView)?.badge = energyBadge(.low, active: false)
@@ -1263,16 +1380,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return parts.isEmpty ? "Boost: on" : "Boost: " + parts.joined(separator: ", ")
     }
 
-    /// setHolders shows a running watcher, hiding the whole section when none
-    /// is running so the menu doesn't carry an empty gap.
+    /// setHolders shows "Charge to Full Now" and a running watcher, hiding
+    /// the whole section when neither applies so the menu doesn't carry an
+    /// empty gap.
     private func setHolders(_ status: Status) {
+        chargeFullItem.isHidden = !status.chargeToFull
         if let watch = status.watch {
             watchItem.title = "Watch: \(watch.label)"
             watchItem.isHidden = false
         } else {
             watchItem.isHidden = true
         }
-        holderSeparator.isHidden = watchItem.isHidden
+        holderSeparator.isHidden = chargeFullItem.isHidden && watchItem.isHidden
     }
 
     /// setModeRows lights the badge of whichever mode is in force on the source

@@ -24,18 +24,8 @@ private let log = Logger(subsystem: "it.blommesteijn.mbatterier", category: "con
 /// isn't open. Window bounds and owners need no Screen Recording permission;
 /// only titles would.
 func controlCenterCorner() -> NSPoint? {
-    guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
-                                                   kCGNullWindowID) as? [[String: Any]],
-          let primary = NSScreen.screens.first else { return nil }
-    let open = windows.compactMap { info -> CGRect? in
-        guard let pid = info[kCGWindowOwnerPID as String] as? pid_t,
-              NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == controlCenterBundleID,
-              let bounds = info[kCGWindowBounds as String] as? NSDictionary,
-              let rect = CGRect(dictionaryRepresentation: bounds),
-              rect.height >= minimumWindowHeight else { return nil }
-        return rect
-    }
-    guard let window = open.first else {
+    guard let primary = NSScreen.screens.first else { return nil }
+    guard let window = controlCenterPanelWindow() else {
         log.notice("Control Center not open")
         return nil
     }
@@ -47,4 +37,25 @@ func controlCenterCorner() -> NSPoint? {
     let corner = NSPoint(x: screen.frame.maxX - panelRightInset, y: screen.visibleFrame.maxY - panelTopGap)
     log.notice("window \(String(describing: window), privacy: .public) corner \(String(describing: corner), privacy: .public)")
     return corner
+}
+
+/// controlCenterIsOpen says whether Control Center's panel is on screen,
+/// without logging: the collapse asks it every frame while it waits.
+func controlCenterIsOpen() -> Bool {
+    controlCenterPanelWindow() != nil
+}
+
+/// controlCenterPanelWindow is the bounds of Control Center's open panel
+/// window (CG's, origin top left), or nil when it isn't open.
+private func controlCenterPanelWindow() -> CGRect? {
+    guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
+                                                   kCGNullWindowID) as? [[String: Any]] else { return nil }
+    return windows.lazy.compactMap { info -> CGRect? in
+        guard let pid = info[kCGWindowOwnerPID as String] as? pid_t,
+              NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == controlCenterBundleID,
+              let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+              let rect = CGRect(dictionaryRepresentation: bounds),
+              rect.height >= minimumWindowHeight else { return nil }
+        return rect
+    }.first
 }
