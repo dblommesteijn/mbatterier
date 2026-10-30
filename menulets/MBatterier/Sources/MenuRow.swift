@@ -42,6 +42,15 @@ let menuTopMargin: CGFloat = 3
 /// one, and it replaces the accent blue AppKit would draw.
 let menuHoverColor = NSColor.labelColor.withAlphaComponent(0.11)
 
+/// onMain runs `work` on the main thread, in the tracking mode as well. An
+/// open menu runs only that mode, and the main dispatch queue waits until it
+/// closes, so a click's action and the reading after it would only show once
+/// the menu was gone. Safe to call from any thread.
+func onMain(_ work: @escaping () -> Void) {
+    RunLoop.main.perform(inModes: [.common, .eventTracking], block: work)
+    CFRunLoopWakeUp(CFRunLoopGetMain())
+}
+
 /// MenuRowView is one row of the menu, with a highlight it draws itself.
 ///
 /// It is a custom view because AppKit highlights a standard menu item in the
@@ -261,7 +270,7 @@ final class MenuRowView: NSView {
             item.menu?.cancelTracking()
         }
         let target = item.target
-        DispatchQueue.main.async { NSApp.sendAction(action, to: target, from: item) }
+        onMain { NSApp.sendAction(action, to: target, from: item) }
     }
 }
 
