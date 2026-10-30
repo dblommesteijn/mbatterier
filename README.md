@@ -359,6 +359,18 @@ docs/                   the README's screenshots
 - The menu bar app runs as you and execs only `/usr/local/bin/mbatterier`.
 - Keep Go patched and run `make check` before installing.
 
+## Future work
+
+- **Low Power setting in Alfred.** The workflow can switch to Low Power (`low`),
+  but the Low Power setting itself can't be changed from Alfred yet.
+- **Apps using significant energy.** Improve the list: it takes 15 seconds,
+  misses bursts between two samples, and its threshold is a guess (see
+  [Apps using significant energy](#apps-using-significant-energy)). Add a
+  setting to show more than two apps.
+- **Menu bar highlight.** While the menu is open, the menu bar item's highlight
+  copies the glass look of Control Center instead of the normal menu bar
+  highlight.
+
 ## License
 
 MIT, see [LICENSE](LICENSE).
